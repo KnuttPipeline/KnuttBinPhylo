@@ -1,0 +1,26 @@
+name: R
+channels:
+  - conda-forge
+  - bioconda
+  - genomedk
+dependencies:
+  - r-igraph=1.2.4.2
+  - r-data.table=1.12.6
+  - r-pbapply=1.4_2
+  - bioconductor-shortread=1.40.0
+  - bioconductor-biostrings=2.50.2
+  # Newer plotly version break multi tab rendering (sometimes!)
+  - r-plotly=4.8.0
+  - r-matrixstats=0.55.0
+  - r-stringr=1.4.0
+  - r-dt=0.11
+  - r-tidyr=1.0.2
+  - r-knitr=1.27
+  - r-rmarkdown=2.1
+  - r-flexdashboard=0.5.1.1
+  - r-bit64=0.9_7
+  - r-viridis=0.5.1
+  - r-ggfortify=0.4.8
+  - bioconductor-keggrest=1.22.0
+  - r-r.utils
+  - r-seqinr=3.6_1

@@ -1,0 +1,18 @@
+
+import os
+
+configfile: "config.yml"
+
+bin_file_pattern = os.path.join(config["bin_input_dir"],
+                                       config["bin_files"])
+
+bin_glob = glob_wildcards(bin_file_pattern)
+
+bins = bin_glob.bin
+
+wildcard_constraints:
+   bin = "|".join(bins)
+   
+include: "Snakefile_1BuildDBs"
+include: "Snakefile_2Phylo"
+

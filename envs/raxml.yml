@@ -1,0 +1,7 @@
+name: raxml
+channels:
+  - bioconda
+  - conda-forge
+dependencies:
+  - raxml=8.2.12
+  - busco=4.0.4

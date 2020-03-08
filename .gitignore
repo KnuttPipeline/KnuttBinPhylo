@@ -1,0 +1,4 @@
+.snakemake
+*.swp
+input/*
+!input/Readme.md

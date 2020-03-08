@@ -1,0 +1,34 @@
+
+phylo_refdir: 'reference_data'
+bin_input_dir: 'input'
+bin_files: '{bin}.fa'
+out_files: 'output'
+
+proteome_query: '(taxonomy:"Archaea [2157]" OR taxonomy:"Bacteria [2]") redundant:no excluded:no'
+
+markers:
+  pheS: PF01409
+  rpslA-L1: PF00687
+  rpslB-L2: PF03947
+  rpslC-L3: PF00297
+  rpslD-L4: PF00573
+  rpslE-L5: PF00673
+  rpslF-L6: PF00347
+  rpslK-L11: PF00298
+  rpslM-L13: PF00572
+  rpslN-L14: PF00238
+  rpslO-L15: PF00828
+  rpslP-L16: PF00252
+  rpslR-L18: PF00861
+  rpslV-L22: PF00237
+  rpsoB: PF00562
+  rpssB-S2: PF00318
+  rpssC-S3: PF00189
+  rpssE-S5: PF03719
+  rpssG-S7: PF00177
+  rpssH-S8: PF00410
+  rpssI-S9: PF00380
+  rpssK-S11: PF00411
+  rpssM-S13: PF00416
+  rpssS-S19: PF00203
+ 

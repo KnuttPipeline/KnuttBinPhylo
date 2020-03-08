@@ -1,0 +1,176 @@
+
+
+
+import csv
+import os
+
+
+basedir_phyldbs = config["phylo_refdir"]
+template_model = basedir_phyldbs + "/MarkerModels/{marker}.hmm"
+template_seqs = basedir_phyldbs + "/MarkerModels/{marker}_UniProtKB.tsv.gz"
+template_aln = basedir_phyldbs + "/MarkerModels/{marker}_aln"
+template_proteomes = basedir_phyldbs + "/all_proteomes_metadata.tsv.gz"
+taxdir = basedir_phyldbs + "/ncbi_tax"
+
+#localrules: download_marker, download_ref_seqs
+
+markers = config["markers"]
+marker_names = list(markers.keys())
+def getpfam(w):
+   return markers[w['marker']]
+
+wildcard_constraints:
+   marker = "|".join(markers)
+
+
+rule download_marker:
+   params:
+     pfam = getpfam,
+     url = lambda w: f"pfam.xfam.org/family/{getpfam(w)}/hmm"
+   output:
+      template_model
+   message:
+      "Downloading HMM for {wildcards.marker} ({params.pfam})"
+   shell:
+     "wget -qO {output} {params.url}"
+
+
+rule download_ref_seqs:
+   params:
+      query = lambda w: f"proteome:({config['proteome_query']}) database:(type:pfam {getpfam(w)})",
+      cols = "id,entry%20name,organism-id,proteome,genes,database(Pfam),sequence",
+      pfam = getpfam
+   output:
+      template_seqs
+   message:
+      "Downloading amino acid sequences for {wildcards.marker}({params.pfam}) with query: '{params.query}'"
+   group:
+      "refmarker"
+   shell:
+      "wget -qO {output} 'https://www.uniprot.org/uniprot/?query={params.query}&format=tab&columns={params.cols}&sort=id&compress=yes'"
+
+rule convert_fasta:
+   input:
+      template_seqs
+   output:
+      temp(template_seqs + ".fa")
+   message:
+      "Converting {wildcards.marker} proteins to FASTA"
+   group:
+      "refmarker"
+   shell:
+      "gzip -dc {input} | awk -F $'\\t' 'NR>1 {{print \">\"$1\"\\n\"$7}}' > {output}"
+
+rule align_seqs:
+   input:
+      seqs = template_seqs + ".fa",
+   output:
+      template_aln + ".fa"
+   benchmark:
+      template_aln + "_benchmark.tsv" 
+   log:
+      template_aln + ".log"
+   conda:
+      "envs/KnuttBinPhylo.yml"
+   message:
+      "Aligning sequences for {wildcards.marker}"
+   group:
+      "refmarker"
+   resources:
+      mem_mb = 2048,
+      disk_mb = 2000
+   threads:
+      2
+   shell:
+      " mafft --anysymbol --auto --reorder --thread {threads} {input} > {output} 2> {log}"
+
+# Download NCBI Taxonomy
+rule download_ncbi_tax:
+   params:
+      dir = taxdir
+   output:
+      names = temp(taxdir + "/names.dmp"),
+      nodes = temp(taxdir + "/nodes.dmp")
+   message:
+      "Downloading NCBI Taxonomy names and nodes"
+   group: 
+      "tax"
+   shell:
+      "wget -qO- ftp.ncbi.nih.gov/pub/taxonomy/taxdump.tar.gz | tar -C {params.dir} -xzf -"
+
+# Create the RData file with the taxonomy infomation and methods
+rule ncbi_translator:
+   input:
+      names = taxdir + "/names.dmp",
+      nodes = taxdir + "/nodes.dmp",
+   output:
+      taxdir + "/ncbi_tax.RData"
+   benchmark:
+      taxdir + "/ncbi_tax_benchmark.tsv"
+   conda:
+      "envs/R.yml"
+   message:
+      "Parsing NCBI taxonomy"
+   group:
+      "tax"
+   script:
+      "scripts/prepNCBItax.R"
+
+rule downloadProteomes:
+   output:
+      template_proteomes
+   message:
+      "Downloading proteome metadata with query"
+   shell:
+       "wget -qO {output} 'https://www.uniprot.org/proteomes/?query={config[proteome_query]}&format=tab&force=true&columns=id,name,organism-id,busco,cpd,assembly&sort=score&compress=yes'"    
+
+rule create_reference:
+   input:
+     data = expand(template_seqs, marker=marker_names),
+     aln = expand(template_aln + ".fa", marker=marker_names),
+     tax = taxdir + "/ncbi_tax.RData",
+     proteomes = template_proteomes
+   params:
+     names = marker_names,
+     domaincompl = 75,
+     markercompl = 50
+   output:
+     stats = basedir_phyldbs + "/marker_stats.tsv",
+     proteomes = basedir_phyldbs + "/proteomes.tsv",
+     krona_incl = basedir_phyldbs + "/proteomes_incl_krona.tsv",
+     krona_excl = basedir_phyldbs + "/proteomes_excl_krona.tsv",
+   benchmark:
+     basedir_phyldbs + "/stats_benchmark.tsv"
+   conda:
+      "envs/R.yml"
+   message:
+      "Calculating marker stats and proteome data"
+   threads:
+      1
+   script: 
+      "scripts/markerStats.R"
+
+rule convert_proteome_fasta:
+   input:
+      basedir_phyldbs + "/proteomes.tsv",
+   output:
+      basedir_phyldbs + "/proteomes.fa",
+   message:
+      "Converting proteome data to FASTA"
+   group:
+      "refmarker"
+   shell:
+      "gzip -dc {input} | awk -F $'\\t' 'NR>1 {{print \">\"$1\"\\n\"$63}}' > {output}"
+
+rule downloadRefs:
+   input:
+      expand(template_model, marker=marker_names),
+      expand(template_seqs, marker=marker_names)
+   message:
+      "Downloaded all HMMs and reference sequences!"
+
+rule alignRefs:
+   input:
+      expand(rules.align_seqs.output, marker=marker_names)
+   message:
+      "Aligned all markers for reference markers!"
