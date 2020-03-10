@@ -16,3 +16,6 @@ wildcard_constraints:
 include: "Snakefile_1BuildDBs"
 include: "Snakefile_2Phylo"
 
+rule data:
+   input:
+      rules.convert_proteome_fasta.output
