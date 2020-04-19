@@ -5,7 +5,7 @@ suppressPackageStartupMessages(library(rlang))
 suppressPackageStartupMessages(library(data.table))
 suppressPackageStartupMessages(library(pbapply))
 
-pboptions(type="timer")
+#pboptions(type="timer")
 
 # Thanks to https://www.r-bloggers.com/much-faster-unnesting-with-data-table/
 unnest_dt <- function(tbl, col) {

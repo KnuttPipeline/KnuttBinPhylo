@@ -1,5 +1,6 @@
 
 import os
+import csv
 
 configfile: "config.yml"
 
@@ -7,15 +8,378 @@ bin_file_pattern = os.path.join(config["bin_input_dir"],
                                        config["bin_files"])
 
 bin_glob = glob_wildcards(bin_file_pattern)
-
 bins = bin_glob.bin
+basedir_output = config["out_files"]
+basedir_phyldbs = config["phylo_refdir"]
+template_model = basedir_phyldbs + "/MarkerModels/{marker}.hmm"
+template_seqs = basedir_phyldbs + "/MarkerModels/{marker}_UniProtKB.tsv.gz"
+template_aln = basedir_phyldbs + "/MarkerModels/{marker}_aln"
+template_proteomes = basedir_phyldbs + "/all_proteomes_metadata.tsv.gz"
+taxdir = basedir_phyldbs + "/ncbi_tax"
+markers = config["markers"]
+marker_names = list(markers.keys())
+def getpfam(w):
+   return markers[w['marker']]
 
 wildcard_constraints:
-   bin = "|".join(bins)
-   
-include: "Snakefile_1BuildDBs"
-include: "Snakefile_2Phylo"
+   bin = "|".join(bins),
+   marker = "|".join(markers)
 
-rule data:
+
+rule download_marker:
+   version: "1.0"
+   params:
+     pfam = getpfam,
+     url = lambda w: f"pfam.xfam.org/family/{getpfam(w)}/hmm"
+   output:
+      template_model
+   message:
+      "Downloading HMM for {wildcards.marker} ({params.pfam})"
+   group:
+      "refmarker"
+   shell:
+     "wget -qO {output} {params.url}"
+
+
+rule download_ref_seqs:
+   version: "1.0"
+   params:
+      query = lambda w: f"proteome:({config['proteome_query']}) database:(type:pfam {getpfam(w)})",
+      cols = "id,entry%20name,organism-id,proteome,genes,database(Pfam),sequence",
+      pfam = getpfam
+   output:
+      template_seqs
+   message:
+      "Downloading amino acid sequences for {wildcards.marker}({params.pfam}) with query: '{params.query}'"
+   group:
+      "refmarker"
+   shell:
+      "wget -qO {output} 'https://www.uniprot.org/uniprot/?query={params.query}&format=tab&columns={params.cols}&sort=id&compress=yes'"
+
+
+rule convert_fasta:
+   version: "1.0"
    input:
-      rules.convert_proteome_fasta.output
+      template_seqs
+   output:
+      temp(template_seqs + ".fa")
+   message:
+      "Converting {wildcards.marker} proteins to FASTA"
+   group:
+      "refmarker"
+   shell:
+      "gzip -dc {input} | awk -F $'\\t' 'NR>1 {{print \">\"$1\"\\n\"$7}}' > {output}"
+
+
+rule align_seqs:
+   version: "1.0"
+   input:
+      seqs = template_seqs + ".fa",
+   output:
+      template_aln + ".fa"
+   log:
+      template_aln + ".log"
+   benchmark:
+      template_aln + "_benchmark.tsv" 
+   conda:
+      "envs/KnuttBinPhylo.yml"
+   message:
+      "Aligning sequences for {wildcards.marker}"
+   group:
+      "refmarker"
+   resources:
+      mem_mb = 2048,
+      disk_mb = 2000
+   threads:
+      8
+   shell:
+      "mafft --anysymbol --auto --reorder --thread {threads} {input} > {output} 2> {log}"
+
+
+# Download NCBI Taxonomy
+rule download_ncbi_tax:
+   version: "1.0"
+   params:
+      dir = taxdir
+   output:
+      names = temp(taxdir + "/names.dmp"),
+      nodes = temp(taxdir + "/nodes.dmp")
+   message:
+      "Downloading NCBI Taxonomy names and nodes"
+   group: 
+      "tax"
+   shell:
+      "wget -qO- ftp.ncbi.nih.gov/pub/taxonomy/taxdump.tar.gz | tar -C {params.dir} -xzf -"
+
+# Create the RData file with the taxonomy infomation and methods
+rule ncbi_translator:
+   version: "1.0"
+   input:
+      names = taxdir + "/names.dmp",
+      nodes = taxdir + "/nodes.dmp",
+   output:
+      taxdir + "/ncbi_tax.RData"
+   benchmark:
+      taxdir + "/ncbi_tax_benchmark.tsv"
+   conda:
+      "envs/R.yml"
+   message:
+      "Parsing NCBI taxonomy"
+   group:
+      "tax"
+   script:
+      "scripts/prepNCBItax.R"
+
+rule downloadProteomes:
+   version: "1.0"
+   output:
+      template_proteomes
+   message:
+      "Downloading proteome metadata with query"
+   shell:
+       "wget -qO {output} 'https://www.uniprot.org/proteomes/?query={config[proteome_query]}&format=tab&force=true&columns=id,name,organism-id,busco,cpd,assembly&sort=score&compress=yes'"    
+
+rule create_reference:
+   version: "1.0"
+   input:
+     data = expand(template_seqs, marker=marker_names),
+     aln = expand(template_aln + ".fa", marker=marker_names),
+     tax = taxdir + "/ncbi_tax.RData",
+     proteomes = template_proteomes
+   params:
+     names = marker_names,
+     domaincompl = 75,
+     markercompl = 50
+   output:
+     stats = basedir_phyldbs + "/marker_stats.tsv",
+     proteomes = basedir_phyldbs + "/proteomes.tsv",
+     krona_incl = basedir_phyldbs + "/proteomes_incl_krona.tsv",
+     krona_excl = basedir_phyldbs + "/proteomes_excl_krona.tsv",
+   benchmark:
+     basedir_phyldbs + "/stats_benchmark.tsv"
+   conda:
+      "envs/R.yml"
+   message:
+      "Calculating marker stats and proteome data"
+   threads:
+      1
+   script: 
+      "scripts/markerStats.R"
+
+rule convert_proteome_fasta:
+   version: "1.0"
+   input:
+      basedir_phyldbs + "/proteomes.tsv",
+   output:
+      basedir_phyldbs + "/proteomes.fa",
+   message:
+      "Converting proteome data to FASTA"
+   group:
+      "refmarker"
+   shell:
+      "gzip -dc {input} | awk -F $'\\t' 'NR>1 {{print \">\"$1\"\\n\"$63}}' > {output}"
+
+rule downloadRefData:
+   input:
+      expand(template_model, marker=marker_names),
+      expand(template_seqs, marker=marker_names)
+   message:
+      "Downloaded all HMMs and reference sequences!"
+
+rule proteomeskrona:
+   version: "1.0"
+   input:
+      basedir_phyldbs + "/proteomes_incl_krona.tsv",
+      basedir_phyldbs + "/proteomes_excl_krona.tsv"
+   params:
+      pairs = [file + "," + name for file, name in zip([basedir_phyldbs + "/proteomes_incl_krona.tsv", basedir_phyldbs + "/proteomes_excl_krona.tsv"], ["Included", "Excluded"])]
+   output:
+      basedir_phyldbs + "/proteomes.html"
+   conda:
+      "envs/KnuttBinPhylo.yml"
+   message:
+      "Creating proteome Krona report"
+   shell:
+      "ktImportText -o {output} -n All {params.pairs}"
+
+    
+rule alignRefData:
+   version: "1.0"
+   input:
+      expand(template_aln + ".fa", marker=marker_names)
+   message:
+      "Aligned all markers for reference markers!"
+
+rule refData:
+    version: "1.0"
+    input:
+        rules.create_reference.output,
+        rules.proteomeskrona.output
+    message:
+        "Prepared reference data"
+
+##
+## Bins
+##
+
+rule predictORFs:
+    input:
+        bin = bin_file_pattern,
+    output:
+        aa = basedir_output + "/gene_pred/{bin}/{bin}.fa",
+        aaindex = basedir_output + "/gene_pred/{bin}/{bin}.fa.fai",
+        gff = basedir_output + "/gene_pred/{bin}/{bin}.gff"
+    benchmark:
+        basedir_output + "/gene_pred/{bin}/{bin}_prodg_bench.tsv"
+    log:
+        basedir_output + "/gene_pred/{bin}/{bin}.log"
+    conda:
+        "envs/KnuttBinPhylo.yml"
+    message:
+        "Predicting genes in {wildcards.bin}"
+    shell:
+        "prodigal -g 11 -p meta -f gff -i {input.bin} -a {output.aa} -o {output.gff} &> {log} && samtools faidx {output.aa}"
+
+rule downloadBUSCO:
+    output:
+        directory("reference_data/BUSCO")
+    message:
+        "Downloading BUSCO data"
+    shell:
+        "mkdir {output} && wget -q -r -nH -np -e robots=off --cut-dirs=2 -P {output} -R 'index.html*' https://busco-data.ezlab.org/v4/data/"
+rule busco:
+    input:
+        bin = basedir_output + "/gene_pred/{bin}/{bin}.fa",
+#        data = directory("reference_data/BUSCO")
+    params:
+        outname = "{bin}_BUSCO",
+        outdir = basedir_output + "/BUSCO/{bin}"
+    output:
+        out = directory(basedir_output + "/BUSCO/{bin}/{bin}_BUSCO"),
+#        conf = temp(basedir_output + "/BUSCO/{bin}/{bin}_BUSCO.conf")
+    benchmark:
+        basedir_output + "/BUSCO/{bin}/{bin}_BUSCO_bench.tsv"
+    log:
+        basedir_output + "/BUSCO/{bin}/{bin}_BUSCO.log"
+    shadow:
+        "full"
+    conda:
+        "envs/raxml.yml"
+    threads:
+        8
+    message:
+        "Running BUSCO on {wildcards.bin}"
+    shell:
+        "busco -m proteins -i {input.bin} -o {params.outname} -f --out_path {params.outdir} --auto-lineage-prok &> {log}"
+#sed $BUSCO_CONFIG_FILE -e 's/.busco_downloads/{input.data}/' && --offline
+rule buscos:
+    input:
+        expand(basedir_output + "/BUSCO/{bin}/{bin}_BUSCO",bin=bins)
+
+rule hmmsearch:
+    input:
+        bin = basedir_output + "/gene_pred/{bin}/{bin}.fa",
+        bin_index = basedir_output + "/gene_pred/{bin}/{bin}.fa.fai",
+        model = template_model
+    output:
+        std = basedir_output + "/hmmsearch/{bin}/{bin}.{marker}.hmmout",
+        tbl = basedir_output + "/hmmsearch/{bin}/{bin}.{marker}.tblout",
+        reg = temp(basedir_output + "/hmmsearch/{bin}/{bin}.{marker}.regions"),
+        fasta = basedir_output + "/hmmsearch/{bin}/{bin}.{marker}.fasta"
+    benchmark:
+        basedir_output + "/hmmsearch/{bin}/{bin}.{marker}_hmmer_bench.tsv"
+    log:
+        basedir_output + "/hmmsearch/{bin}/{bin}.{marker}.hmmlog"
+    group:
+        "hmmsearch"
+    conda:
+        "envs/KnuttBinPhylo.yml"
+    threads:
+        1
+    message: 
+        "Searching for {wildcards.marker} in {wildcards.bin}"
+    shell:
+        ("hmmsearch --cpu {threads} --cut_ga --tblout {output.tbl}  {input.model} {input.bin} > {output.std} 2> {log} && "
+         "sed '/^#/d' {output.tbl} | tr -s ' ' | cut -d ' ' -f 1 > {output.reg} && if [ -s {output.reg} ] ; then "
+         "samtools faidx {input.bin} -r {output.reg} | awk '/^>/{{sub(\">\",\">{wildcards.bin}...{wildcards.marker}...\")}}1' > {output.fasta}; else touch {output.fasta}; fi")
+
+
+rule combine_markerhits:
+    input:
+        expand(basedir_output + "/hmmsearch/{bin}/{bin}.{marker}.fasta", bin=bins, marker="{marker}")
+    output:
+        basedir_output + "/alignment/{marker}_unaligned.fasta",
+    message:
+        "Combining hits for {wildcards.marker} into a single file"
+    shell:
+        "cat {input} | sed 's/*//g' > {output}"
+
+rule align_bin_seqs:
+    input:
+        exis = template_aln + ".fa",
+        newseqs = basedir_output + "/alignment/{marker}_unaligned.fasta",
+    output:
+        basedir_output + "/alignment/{marker}_aligned.fasta",
+    benchmark:
+        basedir_output + "/alignment/{marker}_aligned_bench.tsv"
+    log:
+        basedir_output + "/alignment/{marker}_aligned.log",
+    conda:
+        "envs/KnuttBinPhylo.yml"
+    threads:
+        8
+    message:
+        "Aligning hits for {wildcards.marker}"
+    shell:
+        "mafft --maxiterate 0 --thread {threads} --add {input.newseqs} --keeplength --reorder {input.exis} > {output} 2> {log}"
+
+rule create_bin_proteomes:
+    input:
+        markers = basedir_phyldbs + "/marker_stats.tsv",
+        proteomes = basedir_phyldbs + "/proteomes.tsv",
+        markeraligned = expand(basedir_output + "/alignment/{marker}_aligned.fasta", marker=markers),
+        tax = rules.ncbi_translator.output
+    params:
+        markers = marker_names,
+        markercompl = 50
+    output:
+        tabular = basedir_output + "/totree.tsv",
+        seq = basedir_output + "/tree/totree.fasta",
+        part = basedir_output + "/tree/totree.part"
+    benchmark:
+        basedir_output + "/tree/totree_bench.tsv"
+    conda:
+        "envs/R.yml"
+    threads:
+        8
+    message:
+        "Creating bin sequences"
+    script:
+        "scripts/createBinAlignment.R"
+
+rule tree:
+    input:
+        alignment = basedir_output + "/tree/totree.fasta",
+        partitions = basedir_output + "/tree/totree.part"
+    params:
+        bootstraps = 100,
+        parsimonyseed = 1234,
+        rapidbootstrapseed = 1234,
+        defaultmodel = "PROTGAMMALG",
+        dir = basedir_output + "/tree/"
+    output:
+        bestparsimonytree = basedir_output + "/tree/RAxML_bestTree.run",
+        bipartitionnodelabels = basedir_output + "/tree/RAxML_bipartitions.run",
+        bipartitionbranchlabels = basedir_output + "/tree/RAxML_bipartitionsBranchLabels.run",
+        bootstraptrees = basedir_output + "/tree/RAxML_bootstrap.run",
+        internallog = basedir_output + "/tree/RAxML_info.run"
+    log:
+        internallog = basedir_output + "/tree/run.log"
+    conda:
+        "envs/raxml.yml"
+    threads:
+        64
+    shell:
+        ("raxmlHPC-PTHREADS-AVX2 -p {params.parsimonyseed} -x {params.rapidbootstrapseed} "
+         "-T {threads} -f a -m {params.defaultmodel} -s {input.alignment} -q {input.partitions} "
+         " -# {params.bootstraps} -n run -w $(readlink -f {params.dir}) &> {log}")

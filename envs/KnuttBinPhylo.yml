@@ -7,3 +7,4 @@ dependencies:
   - mafft=7.455
   - prodigal
   - samtools
+  - krona

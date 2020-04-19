@@ -2,3 +2,4 @@
 *.swp
 input/*
 !input/Readme.md
+reference_data/
