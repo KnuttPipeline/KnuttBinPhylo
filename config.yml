@@ -32,3 +32,5 @@ markers:
   rpssM-S13: PF00416
   rpssS-S19: PF00203
  
+# Use the header names in the proteomes file (head -n1 reference_data/proteomes.tsv)
+proteome_name: '{species} {Proteome}'

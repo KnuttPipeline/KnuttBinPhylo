@@ -23,7 +23,8 @@ def getpfam(w):
 
 wildcard_constraints:
    bin = "|".join(bins),
-   marker = "|".join(markers)
+   marker = "|".join(markers),
+   treetype = "bipartitionsBranchLabels|bipartitions"
 
 
 rule download_marker:
@@ -357,7 +358,7 @@ rule create_bin_proteomes:
     script:
         "scripts/createBinAlignment.R"
 
-rule tree:
+rule tree_raxml:
     input:
         alignment = basedir_output + "/tree/totree.fasta",
         partitions = basedir_output + "/tree/totree.part"
@@ -415,3 +416,25 @@ rule itoltree:
         "envs/R.yml"
     script:
         "scripts/itolAnnoFiles.R"
+
+
+rule namedtree_file:
+    version:
+        "1.0"
+    input:
+        tree = basedir_output + "/tree/RAxML_{type}.run",
+        proteomes = basedir_phyldbs + "/proteomes.tsv",
+    output:
+        tree = basedir_output + "/tree/renamed_RAxML_{type}.run"
+    conda:
+        "envs/R.yml"
+    script:
+        "scripts/renameProteomes.py"
+
+rule tree:
+    version:
+        "1.0"
+    input:
+        basedir_output + "/itol/tree.nwk",
+        basedir_output + "/tree/renamed_RAxML_bipartitionsBranchLabels.run",
+        basedir_output + "/tree/renamed_RAxML_bipartitions.run"
