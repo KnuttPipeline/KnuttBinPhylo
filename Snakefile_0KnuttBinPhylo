@@ -383,3 +383,35 @@ rule tree:
         ("raxmlHPC-PTHREADS-AVX2 -p {params.parsimonyseed} -x {params.rapidbootstrapseed} "
          "-T {threads} -f a -m {params.defaultmodel} -s {input.alignment} -q {input.partitions} "
          " -# {params.bootstraps} -n run -w $(readlink -f {params.dir}) &> {log}")
+
+rule downloadGTDBtax:
+    version: "1.0"
+    params:
+        v = "89"
+    output:
+        basedir_phyldbs + "/GTDB.tsv"
+    shell:
+        ("{{ wget -qO- https://data.ace.uq.edu.au/public/gtdb/data/releases/release{params.v}/{params.v}.0/ar122_taxonomy_r{params.v}.tsv && "
+         " wget -qO- https://data.ace.uq.edu.au/public/gtdb/data/releases/release{params.v}/{params.v}.0/bac120_taxonomy_r{params.v}.tsv; }} > {output}")
+
+rule itoltree:
+    version:
+        "1.0"
+    params:
+        markers = markers
+    input:
+        totree = basedir_output + "/totree.tsv",
+        tree = basedir_output + "/tree/RAxML_bipartitionsBranchLabels.run",
+        proteomes = basedir_phyldbs + "/proteomes.tsv",
+        gtdb = basedir_phyldbs + "/GTDB.tsv",
+    output:
+        tree = basedir_output + "/itol/tree.nwk",
+        colors = basedir_output + "/itol/labelcolors.txt",
+        labels = basedir_output + "/itol/labels.txt",
+        popups = basedir_output + "/itol/popups.txt",
+        prunedir = directory(basedir_output + "/itol/prunefiles"),
+        taxdir = directory(basedir_output + "/itol/tax"),
+    conda:
+        "envs/R.yml"
+    script:
+        "scripts/itolAnnoFiles.R"

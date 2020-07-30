@@ -4,3 +4,5 @@ input/*
 !input/Readme.md
 reference_data/
 output/
+.RData
+

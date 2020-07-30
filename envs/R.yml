@@ -24,3 +24,7 @@ dependencies:
   - bioconductor-keggrest=1.22.0
   - r-r.utils
   - r-seqinr=3.6_1
+  - r-ape=5.3
+  - r-phangorn=2.4.0 
+  - bioconductor-treeio=1.4.3
+  - r-gplots=3.0.3 
